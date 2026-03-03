@@ -30,4 +30,12 @@ public class OpenAiDtos {
             String type,
             String text
     ) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record SqlGenResponse(
+            String sql,
+            Map<String, Object> params,
+            List<String> resultColumns,
+            String notes
+    ) {}
 }

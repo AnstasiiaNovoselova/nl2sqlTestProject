@@ -5,9 +5,6 @@ import nure.ua.nl2sqltestproject.client.OpenAiClient;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
-import com.fasterxml.jackson.databind.JsonNode;
-
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -40,6 +37,8 @@ public class AiSqlService {
               "resultColumns": ["id","name","price"],
               "notes": "optional"
             }
+            
+            - If you cannot generate SQL, return {"sql": null, "params": {}, "resultColumns": [], "notes": "reason"}
             """;
 
     private final OpenAiClient openAiClient;
@@ -63,51 +62,23 @@ public class AiSqlService {
                 "clientQuery", clientQuery
         ));
 
-        var rawJson = openAiClient.createJsonResponse(SYSTEM_INSTRUCTIONS, PROMPT_RULES
-                + "\n\nINPUT:\n" + userInputJson);
+        var response = openAiClient.createJsonResponse(SYSTEM_INSTRUCTIONS + "\n\n" + PROMPT_RULES, userInputJson);
 
-        JsonNode root = om.readTree(rawJson);
-        String sql = root.path("sql").asText(null);
-
-        if (sql == null) throw new IllegalArgumentException("OpenAI returned no sql");
+        String sql = response.sql();
+        if (sql == null) {
+            throw new IllegalArgumentException("OpenAI returned no sql");
+        }
 
         validateSql(sql);
 
-        MapSqlParameterSource params = new MapSqlParameterSource();
-        JsonNode p = root.path("params");
-        if (p.isObject()) {
-            var names = p.fieldNames();
-            while (names.hasNext()) {
-                String k = names.next();
-                JsonNode v = p.get(k);
-
-                if (v == null || v.isNull()) params.addValue(k, null);
-                else if (v.isNumber()) params.addValue(k, v.numberValue());
-                else if (v.isBoolean()) params.addValue(k, v.booleanValue());
-                else if (v.isTextual()) params.addValue(k, v.asText());
-                else params.addValue(k, v.toString());
-            }
-        }
-//        if (p.isObject()) {
-//            for (JsonNode jsonNode : p) {
-//                String k = jsonNode.asString();
-//                JsonNode v = p.get(k);
-//                // прототип: кладём как есть (число/строка/boolean)
-//                if (v.isNumber()) params.addValue(k, v.numberValue());
-//                else if (v.isBoolean()) params.addValue(k, v.booleanValue());
-//                else if (v.isString()) params.addValue(k, v.asString());
-//                else params.addValue(k, v.toString());
-//            }
-//        }
+        MapSqlParameterSource params = new MapSqlParameterSource(response.params());
 
         System.out.println("SQL:");
         System.out.println(sql);
         System.out.println("PARAMS:");
-        System.out.println(om.writeValueAsString(p));
+        System.out.println(params);
 
-        // Возвращаем список Map – Spring сам сериализует в JSON
         return jdbc.query(sql, params, (rs, rowNum) -> {
-            // Достаём именно id/name/price если такие колонки в SQL
             var row = new java.util.LinkedHashMap<String, Object>();
             row.put("id", rs.getObject("id"));
             row.put("name", rs.getObject("name"));
