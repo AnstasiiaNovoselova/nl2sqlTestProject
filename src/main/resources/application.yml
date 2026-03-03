@@ -1,0 +1,18 @@
+openai:
+  base-url: https://api.openai.com/v1
+  api-key: somekey
+  model: gpt-4.1
+  connect-timeout: 3s
+  read-timeout: 30s
+spring:
+  profiles:
+    active: local
+  datasource:
+    url: someurl
+    username: username
+    password: password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jdbc:
+    template:
+      query-timeout: 30
