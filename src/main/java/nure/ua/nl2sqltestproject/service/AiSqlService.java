@@ -7,6 +7,10 @@ import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,14 +20,11 @@ import static nure.ua.nl2sqltestproject.service.MySqlSchemaLoader.TARGET_VIEW;
 @Service
 public class AiSqlService {
 
-    private static final String SYSTEM_INSTRUCTIONS = """
+    private static final String FULL_PROMPT_TEMPLATE = """
             You generate SQL queries for an application.
             You must return strictly valid JSON only, without markdown and without extra explanations.
-            """;
 
-    private static final String PROMPT_RULES = """
             You are a SQL generator for an application.
-
             You will receive:
             1) dbType: "mysql"
             2) database schema definition containing exactly one VIEW
@@ -37,7 +38,7 @@ public class AiSqlService {
             - Always use named parameters like :paramName.
             - Use ONLY the provided VIEW.
             - Never reference base tables directly.
-            - The main data source is cosmetic_product_view.
+            - The main data source is %s.
             - skin_type is already flattened in the VIEW through:
               - skin_type_ids
               - skin_type_names
@@ -81,30 +82,44 @@ public class AiSqlService {
 
     public List<Map<String, Object>> runClientQuery(String clientQuery) throws Exception {
         String schema = schemaLoader.loadSchemaDefinition();
+        String fullPrompt = FULL_PROMPT_TEMPLATE.formatted(TARGET_VIEW);
 
-        String userInputJson = om.writeValueAsString(Map.of(
+        String userInputJson = om.writerWithDefaultPrettyPrinter().writeValueAsString(Map.of(
                 "dbType", "mysql",
                 "ddl", schema,
                 "clientQuery", clientQuery
         ));
 
-        OpenAiDtos.SqlGenResponse response =
-                openAiClient.createJsonResponse(SYSTEM_INSTRUCTIONS + "\n\n" + PROMPT_RULES, userInputJson);
+        System.out.println("\n========== FULL PROMPT ==========");
+        System.out.println(fullPrompt + "\n\n" + userInputJson);
+
+        OpenAiDtos.SqlGenResponse response = openAiClient.createJsonResponse(fullPrompt, userInputJson);
+
+        if (response == null) {
+            throw new IllegalStateException("OpenAI response is empty");
+        }
+
+        System.out.println("\n========== RAW MODEL RESPONSE ==========");
+        System.out.println(om.writerWithDefaultPrettyPrinter().writeValueAsString(response));
 
         String sql = response.sql();
-
         if (sql == null || sql.isBlank()) {
             throw new IllegalArgumentException("OpenAI returned no sql");
         }
 
         validateSql(sql);
 
-        MapSqlParameterSource params = new MapSqlParameterSource(response.params());
+        Map<String, Object> paramMap = response.params() == null ? Map.of() : response.params();
+        MapSqlParameterSource params = new MapSqlParameterSource(paramMap);
 
-        System.out.println("SQL:");
+        System.out.println("\n========== SQL WITH NAMED PARAMS ==========");
         System.out.println(sql);
-        System.out.println("PARAMS:");
-        System.out.println(response.params());
+
+        System.out.println("\n========== SQL PARAMS ==========");
+        System.out.println(om.writerWithDefaultPrettyPrinter().writeValueAsString(paramMap));
+
+        System.out.println("\n========== RENDERED SQL ==========");
+        System.out.println(renderSqlForDebug(sql, paramMap));
 
         return jdbc.query(sql, params, (rs, rowNum) -> {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -168,5 +183,40 @@ public class AiSqlService {
                 throw new IllegalArgumentException("Base table usage is forbidden: " + t);
             }
         }
+    }
+
+    private static String renderSqlForDebug(String sql, Map<String, Object> params) {
+        String rendered = sql;
+
+        for (Map.Entry<String, Object> entry : params.entrySet()) {
+            String placeholder = ":" + entry.getKey();
+            String replacement = toSqlLiteral(entry.getValue());
+            rendered = rendered.replace(placeholder, replacement);
+        }
+
+        return rendered;
+    }
+
+    private static String toSqlLiteral(Object value) {
+        switch (value) {
+            case null -> {
+                return "null";
+            }
+            case Number number -> {
+                return value.toString();
+            }
+            case Boolean b -> {
+                return b ? "true" : "false";
+            }
+            default -> {
+            }
+        }
+
+        if (value instanceof LocalDate || value instanceof LocalDateTime || value instanceof Timestamp) {
+            return "'" + value + "'";
+        }
+
+        String text = String.valueOf(value).replace("'", "''");
+        return "'" + text + "'";
     }
 }
