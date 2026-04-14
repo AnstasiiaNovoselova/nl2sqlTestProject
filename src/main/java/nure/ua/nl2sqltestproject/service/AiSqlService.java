@@ -40,7 +40,7 @@ public class AiSqlService {
 
     public List<Map<String, Object>> runClientQuery(String clientQuery) throws Exception {
         String viewDdl = schemaLoader.loadSchemaDefinition();
-        String fullPrompt = promptSupportService.buildTextQueryPrompt(viewDdl);
+        String fullPrompt = promptSupportService.buildTextQueryPrompt(viewDdl, clientQuery);
 
         String userInputJson = om.writeValueAsString(Map.of(
                 "clientQuery", clientQuery
