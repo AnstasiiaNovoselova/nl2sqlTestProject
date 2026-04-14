@@ -11,25 +11,29 @@ public class OpenAiDtos {
             String model,
             Object input,
             Map<String, Object> text
-    ) {}
+    ) {
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record ResponseCreateResponse(
             String id,
             List<OutputItem> output
-    ) {}
+    ) {
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record OutputItem(
             String type,
             List<Content> content
-    ) {}
+    ) {
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Content(
             String type,
             String text
-    ) {}
+    ) {
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record SqlGenResponse(
@@ -37,5 +41,15 @@ public class OpenAiDtos {
             Map<String, Object> params,
             List<String> resultColumns,
             String notes
-    ) {}
+    ) {
+    }
+
+    public record SqlQueryApiResponse(
+            String sql,
+            Map<String, Object> params,
+            List<String> resultColumns,
+            String notes,
+            List<Map<String, Object>> rows
+    ) {
+    }
 }

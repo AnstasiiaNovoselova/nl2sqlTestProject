@@ -38,10 +38,9 @@ public class AiSqlService {
         this.promptSupportService = promptSupportService;
     }
 
-    public List<Map<String, Object>> runClientQuery(String clientQuery) throws Exception {
+    public OpenAiDtos.SqlQueryApiResponse runClientQuery(String clientQuery) throws Exception {
         String viewDdl = schemaLoader.loadSchemaDefinition();
-        String fullPrompt = promptSupportService.buildTextQueryPrompt(viewDdl, clientQuery);
-
+        String fullPrompt = promptSupportService.buildTextQueryPrompt(viewDdl);
         String userInputJson = om.writeValueAsString(Map.of(
                 "clientQuery", clientQuery
         ));
@@ -52,22 +51,32 @@ public class AiSqlService {
         OpenAiDtos.SqlGenResponse response = openAiClient.createJsonResponse(fullPrompt, userInputJson);
 
         String sql = response.sql();
+        Map<String, Object> paramMap = response.params() == null ? Map.of() : response.params();
+        List<String> resultColumns = response.resultColumns() == null ? List.of() : response.resultColumns();
+        String notes = response.notes();
+
         if (sql == null || sql.isBlank()) {
-            throw new IllegalArgumentException("OpenAI returned no sql");
+            return new OpenAiDtos.SqlQueryApiResponse(
+                    null,
+                    Map.of(),
+                    List.of(),
+                    (notes == null || notes.isBlank())
+                            ? "Request is outside the allowed read-only product policy"
+                            : notes,
+                    List.of()
+            );
         }
 
         validateSql(sql);
 
-        Map<String, Object> paramMap = response.params() == null ? Map.of() : response.params();
         MapSqlParameterSource params = new MapSqlParameterSource(paramMap);
 
         System.out.println("\n========== GENERATED SQL ==========");
         System.out.println(sql);
-
         System.out.println("\n========== RENDERED SQL ==========");
         System.out.println(renderSqlForDebug(sql, paramMap));
 
-        return jdbc.query(sql, params, (rs, rowNum) -> {
+        List<Map<String, Object>> rows = jdbc.query(sql, params, (rs, rowNum) -> {
             ResultSetMetaData meta = rs.getMetaData();
             int count = meta.getColumnCount();
             Map<String, Object> row = new LinkedHashMap<>();
@@ -76,6 +85,14 @@ public class AiSqlService {
             }
             return row;
         });
+
+        return new OpenAiDtos.SqlQueryApiResponse(
+                sql,
+                paramMap,
+                resultColumns,
+                notes,
+                rows
+        );
     }
 
     private static void validateSql(String sql) {
@@ -84,16 +101,19 @@ public class AiSqlService {
         if (normalized.contains(";")) {
             throw new IllegalArgumentException("SQL must not contain ';'");
         }
+
         if (!normalized.startsWith("select")) {
             throw new IllegalArgumentException("Only SELECT is allowed");
         }
+
         if (!normalized.matches(".*\\b" + TARGET_VIEW.toLowerCase() + "\\b.*")) {
             throw new IllegalArgumentException("SQL must use only " + TARGET_VIEW);
         }
 
         String[] banned = {
-                "insert", "update", "delete", "drop", "alter", "create",
-                "truncate", "grant", "revoke", "show", "describe", "explain"
+                "insert", "update", "delete", "drop", "alter", "create", "truncate",
+                "grant", "revoke", "show", "describe", "explain",
+                "join", "with", "group by", "having"
         };
 
         for (String b : banned) {
@@ -112,9 +132,15 @@ public class AiSqlService {
     }
 
     private static String toSqlLiteral(Object value) {
-        if (value == null) return "null";
-        if (value instanceof Number || value instanceof BigDecimal) return value.toString();
-        if (value instanceof Boolean b) return b ? "true" : "false";
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof Number || value instanceof BigDecimal) {
+            return value.toString();
+        }
+        if (value instanceof Boolean b) {
+            return b ? "true" : "false";
+        }
         if (value instanceof LocalDate || value instanceof LocalDateTime || value instanceof Timestamp) {
             return "'" + value + "'";
         }

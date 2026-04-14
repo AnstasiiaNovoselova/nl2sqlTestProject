@@ -8,55 +8,47 @@ import java.util.stream.Collectors;
 @Component
 public class PromptSupportService {
 
-    private static final String ROLE_PREFIX =
-            "You are a professional expert in generating safe MySQL SELECT queries for cosmetic product search. ";
+    private static final String SYSTEM_ROLE =
+            "You are a policy-constrained SQL generator for a MySQL application.";
 
-    private static final String COMMON_REQUIREMENTS =
-            "Generate exactly one valid SQL SELECT query only for the provided VIEW. " +
-                    "Use only VIEW %s. " +
-                    "Do not use base tables, INSERT, UPDATE, DELETE, DDL, SHOW, DESCRIBE, EXPLAIN, or semicolon. " +
-                    "Use named parameters like :paramName. " +
-                    "Select all VIEW columns explicitly, not SELECT *. " +
-                    "Return strict JSON only without markdown. " +
-                    "Return all selected VIEW columns in resultColumns. ";
+    private static final String GENERAL_RULES =
+            "Return strictly valid JSON only without markdown or extra explanations. Generate exactly one SELECT statement only. Use only VIEW %s. Use only columns from this VIEW. Do not use base tables. Do not use DDL or DML. Do not use semicolon. Use named parameters like :paramName. Return all selected column names in resultColumns.";
 
-    private static final String RESPONSE_FORMAT =
-            "Response format: " +
-                    "{\"sql\":\"...\",\"params\":{\"paramName\":123},\"resultColumns\":[\"...\"],\"notes\":\"optional\"}. " +
-                    "If SQL cannot be generated return: " +
-                    "{\"sql\":null,\"params\":{},\"resultColumns\":[],\"notes\":\"reason\"}. ";
+    private static final String POLICY_RULES =
+            "Allowed requests: product lookup, filtering rows by fields existing in the VIEW, sorting, limiting returned rows. Forbidden requests: profit, revenue, sales analytics, turnover, margins, KPI, statistics, trends, forecasting, reports, any business or financial analytics, any request requiring aggregation or calculated metrics, and any request outside direct row-level retrieval from the VIEW.";
 
-    private static final String TEXT_QUERY_PART =
-            "User request: %s. ";
+    private static final String SQL_RESTRICTIONS =
+            "Do not use joins, subqueries, CTE, SUM, AVG, COUNT, MIN, MAX, GROUP BY, HAVING, or expressions like price * amount.";
 
-    private static final String CRITERIA_QUERY_PART =
-            "Selection criteria: %s. " +
-                    "If multiple values belong to the same class, use OR inside that class. " +
-                    "If values belong to different classes, use AND between classes. " +
-                    "Ignore values marked as Not Set. ";
+    private static final String DENY_RESPONSE_RULE =
+            "If the client request is forbidden or does not match the allowed policy, return exactly: {\"sql\": null, \"params\": {}, \"resultColumns\": [], \"notes\": \"Request is outside the allowed read-only product policy\"}.";
 
-    private static final String VIEW_PART =
-            "VIEW SQL: %s";
-
-    public String buildTextQueryPrompt(String viewDdl, String clientQuery) {
-        return oneLine(
-                ROLE_PREFIX +
-                        COMMON_REQUIREMENTS.formatted(MySqlSchemaLoader.TARGET_VIEW) +
-                        TEXT_QUERY_PART.formatted(clientQuery) +
-                        RESPONSE_FORMAT +
-                        VIEW_PART.formatted(viewDdl)
-        );
+    public String buildTextQueryPrompt(String viewDdl) {
+        return (SYSTEM_ROLE + " "
+                + GENERAL_RULES.formatted(MySqlSchemaLoader.TARGET_VIEW) + " "
+                + POLICY_RULES + " "
+                + SQL_RESTRICTIONS + " "
+                + DENY_RESPONSE_RULE + " "
+                + "Client request will be provided in JSON field clientQuery. "
+                + "VIEW SQL: " + oneLine(viewDdl))
+                .trim();
     }
 
     public String buildCriteriaPrompt(String viewDdl, List<String> selectedCriteria) {
-        String criteriaText = selectedCriteria.stream().collect(Collectors.joining(", "));
-        return oneLine(
-                ROLE_PREFIX +
-                        COMMON_REQUIREMENTS.formatted(MySqlSchemaLoader.TARGET_VIEW) +
-                        CRITERIA_QUERY_PART.formatted(criteriaText) +
-                        RESPONSE_FORMAT +
-                        VIEW_PART.formatted(viewDdl)
-        );
+        String criteriaText = selectedCriteria.stream()
+                .collect(Collectors.joining(", "));
+
+        return (SYSTEM_ROLE + " "
+                + GENERAL_RULES.formatted(MySqlSchemaLoader.TARGET_VIEW) + " "
+                + POLICY_RULES + " "
+                + SQL_RESTRICTIONS + " "
+                + DENY_RESPONSE_RULE + " "
+                + "User criteria: " + criteriaText + ". "
+                + "Multiple values of the same class mean OR inside that class. "
+                + "Different classes mean AND between classes. "
+                + "Ignore Not Set values. "
+                + "VIEW SQL: " + oneLine(viewDdl))
+                .trim();
     }
 
     private String oneLine(String text) {
